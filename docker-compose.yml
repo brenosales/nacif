@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: nacif_postgres_dev
+    environment:
+      POSTGRES_DB: nacif_api_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - nacif_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API (Development with hot reload)
+  backend:
+    build:
+      context: ./backend/nacif_api
+      dockerfile: ../../backend/Dockerfile
+    container_name: nacif_backend_dev
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/nacif_api_dev
+      DB_HOST: postgres
+      SECRET_KEY_BASE: your_secret_key_base_here_replace_in_production
+      PHX_HOST: 0.0.0.0
+      PORT: 4000
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4000/api/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - nacif_network
+    volumes:
+      - ./backend/nacif_api:/app
+      - /app/deps
+      - /app/_build
+    command: >
+      sh -c "
+        mix deps.get &&
+        mix ecto.create &&
+        mix ecto.migrate &&
+        mix run priv/repo/seeds.exs &&
+        mix phx.server
+      "
+
+  # Frontend React App (Development with hot reload)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: nacif_frontend_dev
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - nacif_network
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - REACT_APP_API_URL=http://localhost:4000/api
+      - CHOKIDAR_USEPOLLING=true
+    command: npm start
+
+volumes:
+  postgres_data:
+
+networks:
+  nacif_network:
+    driver: bridge 
